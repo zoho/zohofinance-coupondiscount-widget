@@ -1,0 +1,85 @@
+
+orgId = organization.get("organization_id");
+invoiceId = invoice.get("invoice_id");
+invoiceDate = invoice.get("date").toDate("yyyy-MM-dd");
+subtotal = invoice.get("sub_total").toNumber();
+invoiceDiscount = invoice.get("discount");
+subtotal = invoice.get("sub_total").toNumber();
+customFieldDetail = invoice.get("custom_field_hash");
+couponName = customFieldDetail.get("cf__u9b3g_coupon");
+couponId = customFieldDetail.get("cf__u9b3g_coupon_unformatted");
+line_items = LIST();
+//store the previous line_item
+for each  data in invoice.get("line_items")
+{
+	if(data.get("description").notContains("Coupon Discount"))
+	{
+		line_items.add(data);
+	}
+	else
+	{
+		discountLineItemValue = data.get("item_total").removeFirstOccurence("-");
+		subtotal = subtotal + discountLineItemValue.tonumber();
+	}
+}
+//cheking the couponId is not equl to null
+if(couponId != null)
+{
+	//Get Coupon Custom-Module Details using InvokeUrl //
+	couponlist = invokeurl
+	[
+		url :"https://books.zoho.com/api/v3/cm__u9b3g_coupon/" + couponId + "?organization_id=" + orgId
+		type :GET
+		connection:"zbookscoupon"
+	];
+	//Get Coupon Details//
+	getCouponRecord = couponlist.get("module_record_hash");
+	couponValidityDate = getCouponRecord.get("cf__u9b3g_coupon_validity_date").toDate("yyyy-MM-dd");
+	couponMinimumAmount = getCouponRecord.get("cf__u9b3g_minimum_total_to_apply_coup");
+	//Find the Date//
+	numberOfDays = daysBetween(invoiceDate,couponValidityDate);
+	//check the coupon validity date
+	if(numberOfDays < 0)
+	{
+        //Coupon is expire//
+		return;
+	}
+	//check subtotal is less than equal coupon discount amt.
+	if(couponMinimumAmount != "" && subtotal < couponMinimumAmount.toNumber())
+	{
+        //invoice total amount is lessthen couponminimumamount. so coupon discount will not be applied//
+		return;
+	}
+	couponDiscountAmt = getCouponRecord.get("cf__u9b3g_coupon_maximum_limit").toNumber();
+	couponDiscountPercentage = getCouponRecord.get("cf__u9b3g_coupon_discount_percent");
+	applyWithExistingDiscount = getCouponRecord.get("cf__u9b3g_apply_coupon_with_other_dis_formatted");
+	checkValidPercentage = subtotal / 100 * couponDiscountPercentage;
+	if(couponDiscountAmt >= checkValidPercentage)
+	{
+		couponValue = getCouponRecord.get("cf__u9b3g_coupon_discount_percent_formatted");
+	}
+	else
+	{
+		couponValue = getCouponRecord.get("cf__u9b3g_coupon_maximum_limit");
+	}
+	//if coupon value is getting to % then convert % to number
+	if(couponValue.endsWithIgnoreCase("%"))
+	{
+		couponValue = subtotal / 100 * couponValue.removeLastOccurence("%").toNumber();
+	}
+	//check subtotal creater than your invoice total value
+	
+	if(applyWithExistingDiscount == false)
+	{
+        //applywithexisting field is false so coupon discount will not be applied//
+		return;
+	}
+	totalDiscount = "-" + couponValue;
+	//Add coupon Line_item//
+	jsonString = "{\"description\":\"Coupon Discount   \nCoupon Code  :  " + couponName + "\",\"quantity\":1,\"rate\":" + totalDiscount + "}";
+	line_items.add(jsonString.toMap());
+}
+body = Map();
+body.put("line_items",line_items);
+//update invoice//
+result = zoho.books.updateRecord("Invoices",orgId,invoiceId,body,"zbookscoupon");
